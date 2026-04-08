@@ -38,6 +38,10 @@
 
 <b>G4Splat</b> integrates <b>accurate geometry guidance with generative prior</b> to enhance 3D scene reconstruction, substantially improving both geometric fidelity and appearance quality in observed and unobserved regions.
 
+## News 🔥🔥🔥
+
+* 🚀 [SceneVerse++](https://sv-pp.github.io/) leverages our method to reconstruct **1,019 high-quality 3D scenes** from challenging **raw Internet videos**, highlighting the scalability of our approach for real-world web content!
+
 
 ## 1. Installation
 
