@@ -73,6 +73,14 @@ if __name__ == '__main__':
     parser.add_argument('--use_downsample_gaussians', action='store_true', help='Use downsample gaussians for training')
     parser.add_argument('--use_mesh_filter', action='store_true', help='Use mesh filter')
     parser.add_argument('--use_dense_view', action='store_true', help='Use dense view for training')                    # Add an additional input stage to extend plane-aware depth estimation across all input views
+
+    # Optimization config (New)
+    parser.add_argument('--use_car_segmentation', action='store_true', help='Run car segmentation using SAM')
+    parser.add_argument('--filter_foreground', action='store_true', help='Filter background points using masks')
+    parser.add_argument('--use_arkit_scale', action='store_true', help='Calibrate scale using ARKit metadata')
+    parser.add_argument('--standardize_coordinates', action='store_true', help='Standardize coordinates to ego-vehicle frame')
+    parser.add_argument('--arkit_dir', type=str, default=None, help='Path to ARKit metadata directory')
+
     args = parser.parse_args()
     
     # Set output paths
@@ -82,7 +90,24 @@ if __name__ == '__main__':
         else:
             output_dir_name = args.source_path.split(os.sep)[-1]
         args.output_path = os.path.join('output', output_dir_name)
+    
     mast3r_scene_path = os.path.join(args.output_path, 'mast3r_sfm')
+    
+    # Intermediate sparse directories
+    sparse_original = os.path.join(mast3r_scene_path, 'sparse', '0')
+    sparse_fg = os.path.join(mast3r_scene_path, 'sparse_fg', '0')
+    sparse_scaled = os.path.join(mast3r_scene_path, 'sparse_scaled', '0')
+    sparse_final = os.path.join(mast3r_scene_path, 'sparse_final', '0')
+    
+    # Determine which sparse directory to use as input for subsequent steps
+    current_sparse_path = sparse_original
+    if args.filter_foreground:
+        current_sparse_path = sparse_fg
+    if args.use_arkit_scale:
+        current_sparse_path = sparse_scaled
+    if args.standardize_coordinates:
+        current_sparse_path = sparse_final
+
     aligned_charts_path = os.path.join(args.output_path, 'mast3r_sfm')
     free_gaussians_path = os.path.join(args.output_path, 'free_gaussians')
     tsdf_meshes_path = os.path.join(args.output_path, 'tsdf_meshes')
@@ -130,7 +155,7 @@ if __name__ == '__main__':
     
     # Defining commands
     sfm_command = " ".join([
-        "python", "scripts/run_sfm.py",
+        "python3", "scripts/run_sfm.py",
         "--source_path", args.source_path,
         "--output_path", mast3r_scene_path,
         "--config", args.sfm_config,
@@ -139,10 +164,36 @@ if __name__ == '__main__':
         "--image_idx" if image_idx_list is not None else "", " ".join([str(i) for i in image_idx_list]) if image_idx_list is not None else "",
         "--randomize_images" if args.randomize_images else "",
     ])
+
+    segment_command = " ".join([
+        "python3", "scripts/segment_car.py",
+        "--source_path", args.source_path,
+    ])
+
+    filter_command = " ".join([
+        "python3", "scripts/filter_foreground_pcd.py",
+        "--input", sparse_original,
+        "--output", sparse_fg,
+        "--masks", os.path.join(args.source_path, "masks", "sam"),
+    ])
+
+    arkit_dir = args.arkit_dir if args.arkit_dir else os.path.join(args.source_path, "arkit")
+    scale_command = " ".join([
+        "python3", "scripts/calibrate_scale.py",
+        "--input", sparse_fg if args.filter_foreground else sparse_original,
+        "--output", sparse_scaled,
+        "--arkit_dir", arkit_dir,
+    ])
+
+    standardize_command = " ".join([
+        "python3", "scripts/standardize_coordinates.py",
+        "--input", sparse_scaled if args.use_arkit_scale else (sparse_fg if args.filter_foreground else sparse_original),
+        "--output", sparse_final,
+    ])
     
     align_charts_command = " ".join([
-        "python", "scripts/align_charts.py",
-        "--source_path", mast3r_scene_path,
+        "python3", "scripts/align_charts.py",
+        "--source_path", current_sparse_path,
         "--mast3r_scene", mast3r_scene_path,
         "--output_path", aligned_charts_path,
         "--config", args.alignment_config,
@@ -155,8 +206,8 @@ if __name__ == '__main__':
     plane_root_path = os.path.join(mast3r_scene_path, 'plane-refine-depths')
 
     refine_free_gaussians_command = " ".join([
-        "python", "scripts/refine_free_gaussians.py",
-        "--mast3r_scene", mast3r_scene_path,
+        "python3", "scripts/refine_free_gaussians.py",
+        "--mast3r_scene", current_sparse_path,
         "--output_path", free_gaussians_path,
         "--config", args.free_gaussians_config,
         dense_arg,
@@ -166,8 +217,8 @@ if __name__ == '__main__':
     ])
 
     render_all_img_command = " ".join([
-        "python", "2d-gaussian-splatting/render_multires.py",
-        "--source_path", mast3r_scene_path,
+        "python3", "2d-gaussian-splatting/render_multires.py",
+        "--source_path", current_sparse_path,
         "--model_path", free_gaussians_path,
         "--skip_test",
         "--skip_mesh",
@@ -176,16 +227,16 @@ if __name__ == '__main__':
     ])
     
     tsdf_command = " ".join([
-        "python", "scripts/extract_tsdf_mesh.py",
-        "--mast3r_scene", mast3r_scene_path,
+        "python3", "scripts/extract_tsdf_mesh.py",
+        "--mast3r_scene", current_sparse_path,
         "--model_path", free_gaussians_path,
         "--output_path", tsdf_meshes_path,
         "--config", args.tsdf_config,
     ])
     
     tetra_command = " ".join([
-        "python", "scripts/extract_tetra_mesh.py",
-        "--mast3r_scene", mast3r_scene_path,
+        "python3", "scripts/extract_tetra_mesh.py",
+        "--mast3r_scene", current_sparse_path,
         "--model_path", free_gaussians_path,
         "--output_path", tetra_meshes_path,
         "--config", args.tetra_config,
@@ -196,8 +247,8 @@ if __name__ == '__main__':
 
     def get_see3d_inpaint_command(stage, select_inpaint_num):
         return " ".join([
-        "python", "scripts/see3d_inpaint.py",
-        "--source_path", mast3r_scene_path,
+        "python3", "scripts/see3d_inpaint.py",
+        "--source_path", current_sparse_path,
         "--model_path", free_gaussians_path,
         "--plane_root_dir", plane_root_path,
         "--iteration", '7000',
@@ -206,32 +257,32 @@ if __name__ == '__main__':
     ])
 
     eval_command = " ".join([
-        "python", "2d-gaussian-splatting/eval/eval.py",
+        "python3", "2d-gaussian-splatting/eval/eval.py",
         "--source_path", args.source_path,
         "--model_path", args.output_path,
         "--sparse_view_num", str(args.config_view_num),
     ])
 
     render_charts_command = " ".join([
-        "python", "2d-gaussian-splatting/render_chart_views.py",
-        "--source_path", mast3r_scene_path,
+        "python3", "2d-gaussian-splatting/render_chart_views.py",
+        "--source_path", current_sparse_path,
         "--save_root_path", plane_root_path,
     ])
 
     generate_2Dplane_command = " ".join([
-        "python", "2d-gaussian-splatting/planes/plane_excavator.py",
+        "python3", "2d-gaussian-splatting/planes/plane_excavator.py",
         "--plane_root_path", plane_root_path,
     ])
 
-    pnts_path = os.path.join(mast3r_scene_path, 'chart_pcd.ply')
-    vis_plane_path = os.path.join(mast3r_scene_path, 'vis_plane')
+    pnts_path = os.path.join(current_sparse_path, 'chart_pcd.ply')
+    vis_plane_path = os.path.join(current_sparse_path, 'vis_plane')
 
     def get_plane_refine_depth_command(anchor_view_id_json_path=None, see3d_root_path=None):
         if see3d_root_path is not None:
             if anchor_view_id_json_path is not None:
                 return " ".join([
-                    "python", "scripts/plane_refine_depth.py",
-                    "--source_path", mast3r_scene_path,
+                    "python3", "scripts/plane_refine_depth.py",
+                    "--source_path", current_sparse_path,
                     "--plane_root_path", plane_root_path,
                     "--pnts_path", pnts_path,
                     "--anchor_view_id_json_path", anchor_view_id_json_path,
@@ -239,29 +290,48 @@ if __name__ == '__main__':
                 ])
             else:
                 return " ".join([
-                    "python", "scripts/plane_refine_depth.py",
-                    "--source_path", mast3r_scene_path,
+                    "python3", "scripts/plane_refine_depth.py",
+                    "--source_path", current_sparse_path,
                     "--plane_root_path", plane_root_path,
                     "--pnts_path", pnts_path,
                     "--see3d_root_path", see3d_root_path,
                 ])
         else:
             return " ".join([
-                "python", "scripts/plane_refine_depth.py",
-                "--source_path", mast3r_scene_path,
+                "python3", "scripts/plane_refine_depth.py",
+                "--source_path", current_sparse_path,
                 "--plane_root_path", plane_root_path,
                 "--pnts_path", pnts_path,
             ])
         
-    see3d_root_path = os.path.join(mast3r_scene_path, 'see3d_render')
+    see3d_root_path = os.path.join(current_sparse_path, 'see3d_render')
 
     render_eval_path = os.path.join(free_gaussians_path, 'train', 'ours_7000', 'renders')
 
     t1 = time.time()
     
-    # run MAtCha training
+    # Step 1: Car Segmentation
+    if args.use_car_segmentation:
+        run_command_safe(segment_command)
+
+    # Step 2: SfM
     run_command_safe(sfm_command)
+
+    # Step 3: Foreground Filtering
+    if args.filter_foreground:
+        run_command_safe(filter_command)
+
+    # Step 4: Scale Calibration
+    if args.use_arkit_scale:
+        run_command_safe(scale_command)
+
+    # Step 5: Coordinate Standardization
+    if args.standardize_coordinates:
+        run_command_safe(standardize_command)
+
+    # run MAtCha training
     run_command_safe(align_charts_command)
+
 
     # generate 2D planes + refine depth for input views + init gaussian training
     run_command_safe(render_charts_command)

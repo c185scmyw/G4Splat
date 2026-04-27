@@ -1,0 +1,6 @@
+text_prompt: "car mask"
+box_threshold: 0.3
+text_threshold: 0.25
+fallback_prompts: ["car", "vehicle", "automobile", "car window"]
+skip_existing: true
+sam_model: "vit_h"
